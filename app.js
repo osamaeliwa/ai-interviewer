@@ -421,23 +421,32 @@ async function callGemini(userMessage) {
             if (res.status === 429) {
                 throw new Error('ratelimit');
             }
-            throw new Error(`API error: ${res.status}`);
+            const apiMsg = errData?.error?.message || errData?.message || JSON.stringify(errData);
+            throw new Error(`API error ${res.status}: ${apiMsg}`);
         }
 
         const data = await res.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
-        if (!text) throw new Error('Empty response from API');
+        if (!text) {
+            const reason = data.candidates?.[0]?.finishReason || 'unknown';
+            throw new Error(`Empty response from API (finishReason: ${reason})`);
+        }
 
         // Add assistant response to history
         state.conversationHistory.push({ role: 'model', parts: [{ text }] });
 
         // Parse JSON response
-        const parsed = JSON.parse(text);
+        let parsed;
+        try {
+            parsed = JSON.parse(text);
+        } catch (parseErr) {
+            throw new Error(`Failed to parse API response as JSON: ${parseErr.message}. Raw: ${text.slice(0, 200)}`);
+        }
         return parsed;
     } catch (err) {
         console.error('Gemini call failed:', err);
-        if (err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Failed')) {
+        if (err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Failed to fetch')) {
             throw new Error('network');
         }
         throw err;
@@ -514,21 +523,26 @@ async function askNextQuestion(prompt) {
         state.isLoading = false;
         dom.submitBtn.disabled = false;
 
+        let errorDetail = err.message || 'Unknown error';
+
         if (err.message === 'network') {
             showToast(t('errorNetwork'), 'error');
+            errorDetail = 'Network error — check your internet connection.';
         } else if (err.message === 'ratelimit') {
-            showToast(state.lang === 'ar' ? 'كثرت الطلبات، جاري المحاولة مرة ثانية...' : 'Too many requests, retrying...', 'error');
+            showToast(state.lang === 'ar' ? 'كثرت الطلبات، جاري المحاولة مرة ثانية...' : 'Too many requests, retrying in 3s...', 'error');
             // Auto-retry after 3 seconds
             setTimeout(() => askNextQuestion(prompt), 3000);
             return;
         } else {
-            showToast(t('errorGeneric'), 'error');
+            showToast(`Error: ${errorDetail}`, 'error');
         }
-        // Show retry button
+
+        // Show error details + retry button
         dom.questionArea.style.display = 'flex';
-        dom.questionText.textContent = state.lang === 'ar'
-            ? 'صار خطأ. اضغط الزر تحت عشان تحاول مرة ثانية.'
-            : 'An error occurred. Click the button below to try again.';
+        dom.questionText.innerHTML = `
+            <strong style="color:var(--error)">${state.lang === 'ar' ? 'صار خطأ:' : 'Error:'}</strong>
+            <code style="display:block;margin-top:0.4rem;font-size:0.82rem;word-break:break-all;background:var(--bg-tertiary);padding:0.5rem;border-radius:6px;color:var(--error)">${escapeHtml(errorDetail)}</code>
+        `;
         dom.inputContainer.innerHTML = '';
         const retryBtn = document.createElement('button');
         retryBtn.className = 'btn-primary';
@@ -644,7 +658,7 @@ async function sendToGoogleSheet() {
         showToast(state.lang === 'ar' ? 'تم حفظ الإجابات بنجاح!' : 'Responses saved to Google Sheet!');
     } catch (err) {
         console.error('Google Sheet error:', err);
-        showToast(state.lang === 'ar' ? 'ما قدرنا نحفظ البيانات. جرب تصدّرها كـ JSON.' : 'Could not save to Google Sheet. Try exporting as JSON.', 'error');
+        showToast(`Google Sheet error: ${err.message || 'Unknown error'}. Try exporting as JSON.`, 'error');
     }
 }
 
