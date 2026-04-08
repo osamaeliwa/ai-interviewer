@@ -115,7 +115,7 @@ const storageData = {
 };
 
 // ===== Config =====
-const GEMINI_API_KEY = 'AIzaSyDB9liz1s-iC836P5lqdhkJTNK8jNAsBr8';
+const GEMINI_API_KEY = 'AIzaSyBQJHh4l-be5bSGMkRPwhIc7Q_sJTGkcHM';
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 const MAX_QUESTIONS = 5;
