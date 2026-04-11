@@ -10,9 +10,6 @@ const MODELS = [
   'gemini-2.0-flash-lite',
 ];
 
-// Round-robin counter (resets per Worker instance)
-let keyIndex = 0;
-
 async function callGemini(model, payload, apiKey) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const response = await fetch(url, {
@@ -39,26 +36,24 @@ export default {
       const requestedModel = body.model || 'gemini-2.0-flash';
       const payload = body.payload;
 
-      // Get both API keys
-      const apiKeys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2].filter(Boolean);
+      // Get both API keys — shuffle randomly so load spreads across keys
+      const allKeys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2].filter(Boolean);
+      const apiKeys = allKeys.sort(() => Math.random() - 0.5);
       const modelsToTry = [requestedModel, ...MODELS.filter(m => m !== requestedModel)];
 
-      // Try each combination of key + model on rate limit
+      // Try each key × model combination on rate limit
       for (const model of modelsToTry) {
-        for (let i = 0; i < apiKeys.length; i++) {
-          // Rotate keys round-robin
-          const key = apiKeys[(keyIndex + i) % apiKeys.length];
+        for (const key of apiKeys) {
           const { status, data } = await callGemini(model, payload, key);
 
           if (status === 200) {
-            keyIndex = (keyIndex + 1) % apiKeys.length; // advance for next request
             return new Response(JSON.stringify(data), {
               status: 200,
               headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
             });
           }
 
-          // Rate limit — try next key
+          // Rate limit — try next key or model
           if (status === 429 || status === 503) continue;
 
           // Other error — return immediately
