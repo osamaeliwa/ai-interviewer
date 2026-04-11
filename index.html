@@ -1437,8 +1437,8 @@ const storageData = {
 };
 
 // ===== Config =====
-const GEMINI_MODEL = 'gemini-2.0-flash';
-const GEMINI_PROXY_URL = 'https://gemini-proxy.osamaeliwa43.workers.dev';
+const CLAUDE_MODEL = 'claude-haiku-4-5';
+const PROXY_URL = 'https://gemini-proxy.osamaeliwa43.workers.dev';
 const MAX_QUESTIONS = 5;
 const MAX_FOLLOWUPS_PER_QUESTION = 2;
 const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbypMqTZSuouAqycV5c_90BwyDx135H7TrgidfF86U-NOv6Khv_mcWdTBPjmus_ooEzT/exec';
@@ -1683,7 +1683,7 @@ function getUserAnswer() {
     return state.selectedChoice || '';
 }
 
-// ===== Gemini API =====
+// ===== Claude API =====
 function buildSystemPrompt() {
     const lang = state.lang === 'ar' ? 'Saudi Arabic dialect (\u0627\u0644\u0644\u0647\u062C\u0629 \u0627\u0644\u0633\u0639\u0648\u062F\u064A\u0629)' : 'English';
     return `You are a professional UX researcher conducting a qualitative user interview about delivery apps.
@@ -1722,36 +1722,30 @@ You MUST respond with valid JSON only (no markdown, no backticks). Use this exac
 - REMEMBER: The "question" field must contain ONLY ONE question, written entirely in ${lang}.`;
 }
 
-async function callGemini(userMessage) {
-    // Add user message to history
+async function callClaude(userMessage) {
+    // Add user message to history (Anthropic format)
     if (userMessage) {
-        state.conversationHistory.push({ role: 'user', parts: [{ text: userMessage }] });
+        state.conversationHistory.push({ role: 'user', content: userMessage });
     }
 
-    const body = {
-        system_instruction: {
-            parts: [{ text: buildSystemPrompt() }]
-        },
-        contents: state.conversationHistory,
-        generationConfig: {
-            temperature: 0.7,
-            topP: 0.9,
-            maxOutputTokens: 1024,
-            responseMimeType: "application/json",
-        }
+    const payload = {
+        model: CLAUDE_MODEL,
+        max_tokens: 1024,
+        system: buildSystemPrompt(),
+        messages: state.conversationHistory,
     };
 
     try {
-        const res = await fetch(GEMINI_PROXY_URL, {
+        const res = await fetch(PROXY_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: GEMINI_MODEL, payload: body }),
+            body: JSON.stringify({ payload }),
         });
 
         if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
-            console.error('Gemini API error:', res.status, errData);
-            if (res.status === 429) {
+            console.error('Claude API error:', res.status, errData);
+            if (res.status === 429 || res.status === 529) {
                 throw new Error('ratelimit');
             }
             const apiMsg = errData?.error?.message || errData?.message || JSON.stringify(errData);
@@ -1759,20 +1753,20 @@ async function callGemini(userMessage) {
         }
 
         const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const text = data.content?.[0]?.text;
 
         if (!text) {
-            const reason = data.candidates?.[0]?.finishReason || 'unknown';
-            throw new Error(`Empty response from API (finishReason: ${reason})`);
+            throw new Error(`Empty response from API. Stop reason: ${data.stop_reason || 'unknown'}`);
         }
 
         // Add assistant response to history
-        state.conversationHistory.push({ role: 'model', parts: [{ text }] });
+        state.conversationHistory.push({ role: 'assistant', content: text });
 
-        // Parse JSON response
+        // Parse JSON response — strip markdown code fences if present
         let parsed;
         try {
-            parsed = JSON.parse(text);
+            const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+            parsed = JSON.parse(cleaned);
         } catch (parseErr) {
             throw new Error(`Failed to parse API response as JSON: ${parseErr.message}. Raw: ${text.slice(0, 200)}`);
         }
@@ -1810,7 +1804,7 @@ async function askNextQuestion(prompt) {
     dom.submitBtn.disabled = true;
 
     try {
-        const response = await callGemini(prompt);
+        const response = await callClaude(prompt);
 
         if (response.isComplete) {
             finishInterview(response.question);
