@@ -1696,7 +1696,7 @@ async function callGeminiRaw(promptText) {
         contents: [{ role: 'user', parts: [{ text: promptText }] }],
         generationConfig: {
             temperature: 0.8,
-            maxOutputTokens: 800,
+            maxOutputTokens: 1500,
             responseMimeType: 'application/json',
         },
     };
