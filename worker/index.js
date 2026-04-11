@@ -4,15 +4,14 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-const FALLBACK_MODELS = [
+const MODELS = [
   'gemini-2.0-flash',
   'gemini-2.5-flash',
   'gemini-2.0-flash-lite',
 ];
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+// Round-robin counter (resets per Worker instance)
+let keyIndex = 0;
 
 async function callGemini(model, payload, apiKey) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -40,29 +39,37 @@ export default {
       const requestedModel = body.model || 'gemini-2.0-flash';
       const payload = body.payload;
 
-      const modelsToTry = [requestedModel, ...FALLBACK_MODELS.filter(m => m !== requestedModel)];
+      // Get both API keys
+      const apiKeys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2].filter(Boolean);
+      const modelsToTry = [requestedModel, ...MODELS.filter(m => m !== requestedModel)];
 
+      // Try each combination of key + model on rate limit
       for (const model of modelsToTry) {
-        const { status, data } = await callGemini(model, payload, env.GEMINI_API_KEY);
+        for (let i = 0; i < apiKeys.length; i++) {
+          // Rotate keys round-robin
+          const key = apiKeys[(keyIndex + i) % apiKeys.length];
+          const { status, data } = await callGemini(model, payload, key);
 
-        if (status === 200) {
+          if (status === 200) {
+            keyIndex = (keyIndex + 1) % apiKeys.length; // advance for next request
+            return new Response(JSON.stringify(data), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+            });
+          }
+
+          // Rate limit — try next key
+          if (status === 429 || status === 503) continue;
+
+          // Other error — return immediately
           return new Response(JSON.stringify(data), {
-            status: 200,
+            status,
             headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
           });
         }
-
-        // On rate limit, try next fallback model immediately (no retries)
-        if (status === 429 || status === 503) continue;
-
-        // Any other error — return immediately
-        return new Response(JSON.stringify(data), {
-          status,
-          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-        });
       }
 
-      return new Response(JSON.stringify({ error: { message: 'Rate limit reached. Please wait a moment and try again.' } }), {
+      return new Response(JSON.stringify({ error: { message: 'Rate limit reached on all keys. Please wait a moment and try again.' } }), {
         status: 429,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
