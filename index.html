@@ -1803,9 +1803,8 @@ function showError(err, retryFn) {
     retryBtn.textContent = state.lang === 'ar' ? 'حاول مرة ثانية' : 'Try Again';
     retryBtn.addEventListener('click', retryFn);
     dom.inputContainer.appendChild(retryBtn);
-        dom.answerArea.classList.remove('hidden');
-        dom.submitBtn.style.display = 'none';
-    }
+    dom.answerArea.classList.remove('hidden');
+    dom.submitBtn.style.display = 'none';
 }
 
 function clearValidationError() {
