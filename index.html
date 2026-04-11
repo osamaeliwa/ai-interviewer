@@ -1478,7 +1478,6 @@ const dom = {
     submitBtn: $('#submitBtn'),
     exitBtn: $('#exitBtn'),
     answersListContainer: $('#answersListContainer'),
-    storageOptions: $('#storageOptions'),
     exportBtn: $('#exportBtn'),
     downloadTxtBtn: $('#downloadTxtBtn'),
     newInterviewBtn: $('#newInterviewBtn'),
@@ -1951,7 +1950,6 @@ function finishInterview(thankYouMsg) {
 
     showScreen('results');
     renderResults();
-    renderStorageOptions();
 
     // Send data to Google Sheet
     sendToGoogleSheet();
@@ -2015,19 +2013,6 @@ function renderResults() {
     });
 }
 
-function renderStorageOptions() {
-    dom.storageOptions.innerHTML = '';
-    const options = storageData[state.lang] || storageData.en;
-    options.forEach(opt => {
-        const div = document.createElement('div');
-        div.className = 'storage-option';
-        div.innerHTML = `
-            <div class="option-name">${opt.name}</div>
-            <div class="option-desc">${opt.desc}</div>
-        `;
-        dom.storageOptions.appendChild(div);
-    });
-}
 
 function exportJSON() {
     const data = {
