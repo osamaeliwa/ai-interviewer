@@ -1433,7 +1433,7 @@ const storageData = {
 };
 
 // ===== Config =====
-const GEMINI_MODEL = 'gemini-2.0-flash-lite';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 const PROXY_URL = 'https://gemini-proxy.osamaeliwa43.workers.dev';
 const MAX_QUESTIONS = 5;
 const MAX_FOLLOWUPS_PER_QUESTION = 2;
@@ -1696,7 +1696,7 @@ async function callGeminiRaw(promptText) {
         contents: [{ role: 'user', parts: [{ text: promptText }] }],
         generationConfig: {
             temperature: 0.8,
-            maxOutputTokens: 1500,
+            maxOutputTokens: 2048,
             responseMimeType: 'application/json',
         },
     };
