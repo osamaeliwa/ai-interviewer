@@ -1433,7 +1433,7 @@ const storageData = {
 };
 
 // ===== Config =====
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.0-flash-lite';
 const PROXY_URL = 'https://gemini-proxy.osamaeliwa43.workers.dev';
 const MAX_QUESTIONS = 5;
 const MAX_FOLLOWUPS_PER_QUESTION = 2;
@@ -1681,41 +1681,14 @@ function getUserAnswer() {
 
 // ===== Gemini API =====
 function buildSystemPrompt() {
-    const lang = state.lang === 'ar' ? 'Saudi Arabic dialect (\u0627\u0644\u0644\u0647\u062C\u0629 \u0627\u0644\u0633\u0639\u0648\u062F\u064A\u0629)' : 'English';
-    return `You are a professional UX researcher conducting a qualitative user interview about delivery apps.
-
-CRITICAL LANGUAGE RULE:
-- You MUST write the question text in ${lang}. Every single question and follow-up MUST be in ${lang}.
-${state.lang === 'ar' ? '- Use Saudi Arabian dialect (\u0627\u0644\u0644\u0647\u062C\u0629 \u0627\u0644\u0633\u0639\u0648\u062F\u064A\u0629), NOT formal/classical Arabic (\u0641\u0635\u062D\u0649). For example: "\u0642\u0648\u0644\u064A \u0639\u0646 \u0622\u062E\u0631 \u0645\u0631\u0629 \u0637\u0644\u0628\u062A \u0623\u0643\u0644 \u0645\u0646 \u062A\u0637\u0628\u064A\u0642 \u062A\u0648\u0635\u064A\u0644\u061F" instead of "\u0647\u0644 \u064A\u0645\u0643\u0646\u0643 \u0623\u0646 \u062A\u062D\u0643\u064A \u0644\u064A \u0639\u0646 \u0622\u062E\u0631 \u0645\u0631\u0629 \u0637\u0644\u0628\u062A \u0637\u0639\u0627\u0645\u064B\u0627 \u0639\u0628\u0631 \u062A\u0637\u0628\u064A\u0642 \u062A\u0648\u0635\u064A\u0644\u061F". Use words like: \u0648\u0634, \u0644\u064A\u0647, \u0643\u064A\u0641, \u062A\u0642\u062F\u0631, \u0627\u064A\u0634, \u064A\u0639\u0646\u064A, etc.' : ''}
-
-QUESTION RULES:
-- Ask exactly ${MAX_QUESTIONS} main questions total.
-- CRITICAL: Ask ONLY ONE question at a time. NEVER combine two questions in one message. NEVER use "and" or "also" to join two questions. Each JSON response must contain exactly ONE single question.
-- Start with broad, open-ended questions and get more specific as the interview progresses.
-- Keep all questions neutral \u2014 NEVER lead the user toward a particular answer.
-- Be specific enough to guide the user, but leave room for them to share details in their own words.
-- NEVER use subjective or floating words like "expensive", "cheap", "big", "small", "good", "bad" \u2014 let the user define these in their own terms.
-- NEVER ask survey-style questions (e.g., "On a scale of 1-10...").
-- If the user's answer is vague or incomplete, you may ask a follow-up to get more depth. But ONLY ask a follow-up if truly needed \u2014 do not overwhelm the user.
-- NEVER ask more than ${MAX_FOLLOWUPS_PER_QUESTION} follow-ups per main question.
-- After all ${MAX_QUESTIONS} main questions are answered, end the interview.
-
-You MUST respond with valid JSON only (no markdown, no backticks). Use this exact format:
-{
-  "question": "Your single question text here in ${lang}",
-  "inputType": "text",
-  "options": [],
-  "isFollowUp": false,
-  "isComplete": false,
-  "questionNumber": 1
-}
-
-- inputType can be: "text" (open-ended), "yesno", "choice" (provide options array), or "scale"
-- For qualitative interviews, prefer "text" input type for most questions.
-- isFollowUp: true if this is a follow-up question to dig deeper into the previous answer
-- isComplete: true ONLY when ALL ${MAX_QUESTIONS} questions have been answered and the interview is done. When isComplete is true, set question to a brief thank-you message in ${lang}.
-- questionNumber: the current main question number (1-${MAX_QUESTIONS}), stays the same during follow-ups
-- REMEMBER: The "question" field must contain ONLY ONE question, written entirely in ${lang}.`;
+    const lang = state.lang === 'ar' ? 'Saudi Arabic dialect (لهجة سعودية عامية)' : 'English';
+    const arNote = state.lang === 'ar' ? ' Use casual Saudi words: وش، ليه، كيف، تقدر، ايش، يعني. NOT formal Arabic.' : '';
+    return `UX researcher interviewing users about delivery apps. Conduct ${MAX_QUESTIONS} questions max.
+LANGUAGE: Respond ONLY in ${lang}.${arNote}
+RULES: One question at a time. Neutral, open-ended. No follow-ups unless vague (max ${MAX_FOLLOWUPS_PER_QUESTION} per question).
+RESPOND with JSON only, no markdown:
+{"question":"...","inputType":"text","options":[],"isFollowUp":false,"isComplete":false,"questionNumber":1}
+inputType: text|yesno|choice|scale. Prefer text. isComplete:true + thank-you message after all ${MAX_QUESTIONS} answered.`;
 }
 
 async function callGemini(userMessage) {
@@ -1730,7 +1703,7 @@ async function callGemini(userMessage) {
         generationConfig: {
             temperature: 0.7,
             topP: 0.9,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 300,
             responseMimeType: 'application/json',
         },
     };
