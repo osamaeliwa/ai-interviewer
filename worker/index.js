@@ -6,6 +6,7 @@ const CORS_HEADERS = {
 
 const FALLBACK_MODELS = [
   'gemini-2.0-flash',
+  'gemini-2.5-flash',
   'gemini-2.0-flash-lite',
 ];
 
@@ -55,8 +56,8 @@ export default {
           }
 
           if (status === 429 || status === 503) {
-            // Exponential backoff: 1s, 2s, 4s
-            const delay = Math.pow(2, attempt) * 1000;
+            // Exponential backoff: 2s, 4s, 8s
+            const delay = Math.pow(2, attempt + 1) * 1000;
             await sleep(delay);
             continue;
           }
