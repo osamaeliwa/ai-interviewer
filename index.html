@@ -1437,9 +1437,8 @@ const storageData = {
 };
 
 // ===== Config =====
-const GEMINI_API_KEY = 'AIzaSyBQJHh4l-be5bSGMkRPwhIc7Q_sJTGkcHM';
 const GEMINI_MODEL = 'gemini-2.0-flash';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_PROXY_URL = 'https://gemini-proxy.osamaeliwa43.workers.dev';
 const MAX_QUESTIONS = 5;
 const MAX_FOLLOWUPS_PER_QUESTION = 2;
 const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbypMqTZSuouAqycV5c_90BwyDx135H7TrgidfF86U-NOv6Khv_mcWdTBPjmus_ooEzT/exec';
@@ -1743,10 +1742,10 @@ async function callGemini(userMessage) {
     };
 
     try {
-        const res = await fetch(GEMINI_URL, {
+        const res = await fetch(GEMINI_PROXY_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ model: GEMINI_MODEL, payload: body }),
         });
 
         if (!res.ok) {
