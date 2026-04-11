@@ -1447,6 +1447,7 @@ let state = {
     questionIndex: 0,             // 0-based main question index
     followUpCount: 0,             // follow-ups asked for current question
     conversationHistory: [],      // full Gemini conversation
+    preGenQuestions: [],          // pre-generated questions array
     interviewData: [],            // { question, answer, followUps: [{question, answer}] }
     selectedChoice: null,
     isLoading: false,
@@ -1680,183 +1681,129 @@ function getUserAnswer() {
 }
 
 // ===== Gemini API =====
-function buildSystemPrompt() {
-    const lang = state.lang === 'ar' ? 'Saudi Arabic dialect (لهجة سعودية عامية)' : 'English';
-    const arNote = state.lang === 'ar' ? ' Use casual Saudi words: وش، ليه، كيف، تقدر، ايش، يعني. NOT formal Arabic.' : '';
-    return `UX researcher interviewing users about delivery apps. Conduct ${MAX_QUESTIONS} questions max.
-LANGUAGE: Respond ONLY in ${lang}.${arNote}
-RULES: One question at a time. Neutral, open-ended. No follow-ups unless vague (max ${MAX_FOLLOWUPS_PER_QUESTION} per question).
-RESPOND with JSON only, no markdown:
-{"question":"...","inputType":"text","options":[],"isFollowUp":false,"isComplete":false,"questionNumber":1}
-inputType: text|yesno|choice|scale. Prefer text. isComplete:true + thank-you message after all ${MAX_QUESTIONS} answered.`;
+function buildPreGenPrompt() {
+    const lang = state.lang === 'ar' ? 'Saudi Arabic dialect (لهجة سعودية عامية، مثل: وش، ليه، كيف، تقدر، ايش، يعني)' : 'English';
+    return `You are a UX researcher. Generate exactly ${MAX_QUESTIONS} interview questions about delivery app experiences.
+LANGUAGE: Write ALL questions in ${lang} only.
+RULES: Open-ended, neutral, no leading words (good/bad/cheap/expensive). One question per item.
+Respond with JSON array only, no markdown:
+[{"question":"...","inputType":"text","options":[]},...]
+inputType options: text (prefer this), yesno, choice (fill options[]), scale.`;
 }
 
-async function callGemini(userMessage) {
-    // Add user message to history (Gemini format)
-    if (userMessage) {
-        state.conversationHistory.push({ role: 'user', parts: [{ text: userMessage }] });
-    }
-
+async function callGeminiRaw(promptText) {
     const payload = {
-        system_instruction: { parts: [{ text: buildSystemPrompt() }] },
-        contents: state.conversationHistory,
+        system_instruction: { parts: [{ text: buildPreGenPrompt() }] },
+        contents: [{ role: 'user', parts: [{ text: promptText }] }],
         generationConfig: {
-            temperature: 0.7,
-            topP: 0.9,
-            maxOutputTokens: 300,
+            temperature: 0.8,
+            maxOutputTokens: 800,
             responseMimeType: 'application/json',
         },
     };
 
+    const res = await fetch(PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: GEMINI_MODEL, payload }),
+    });
+
+    if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 429) throw new Error('ratelimit');
+        const apiMsg = errData?.error?.message || JSON.stringify(errData);
+        throw new Error(`API error ${res.status}: ${apiMsg}`);
+    }
+
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error(`Empty response (finishReason: ${data.candidates?.[0]?.finishReason || 'unknown'})`);
     try {
-        const res = await fetch(PROXY_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: GEMINI_MODEL, payload }),
-        });
-
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            console.error('Gemini API error:', res.status, errData);
-            if (res.status === 429) {
-                throw new Error('ratelimit');
-            }
-            const apiMsg = errData?.error?.message || errData?.message || JSON.stringify(errData);
-            throw new Error(`API error ${res.status}: ${apiMsg}`);
-        }
-
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (!text) {
-            const reason = data.candidates?.[0]?.finishReason || 'unknown';
-            throw new Error(`Empty response from API (finishReason: ${reason})`);
-        }
-
-        // Add assistant response to history
-        state.conversationHistory.push({ role: 'model', parts: [{ text }] });
-
-        // Parse JSON response
-        let parsed;
-        try {
-            parsed = JSON.parse(text);
-        } catch (parseErr) {
-            throw new Error(`Failed to parse API response as JSON: ${parseErr.message}. Raw: ${text.slice(0, 200)}`);
-        }
-        return parsed;
-    } catch (err) {
-        console.error('Gemini call failed:', err);
-        if (err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Failed to fetch')) {
-            throw new Error('network');
-        }
-        throw err;
+        return JSON.parse(text);
+    } catch (e) {
+        throw new Error(`Failed to parse response: ${e.message}. Raw: ${text.slice(0, 200)}`);
     }
 }
 
 // ===== Interview flow =====
 async function startInterview() {
-    // Reset state
     state.questionIndex = 0;
     state.followUpCount = 0;
     state.conversationHistory = [];
     state.interviewData = [];
+    state.preGenQuestions = [];
     state.selectedChoice = null;
     state.isLoading = false;
 
     showScreen('interview');
     updateProgress();
-    const startPrompt = state.lang === 'ar'
-        ? '\u0627\u0628\u062F\u0623 \u0627\u0644\u0645\u0642\u0627\u0628\u0644\u0629 \u0648\u0627\u0633\u0623\u0644\u0646\u064A \u0627\u0644\u0633\u0624\u0627\u0644 \u0627\u0644\u0623\u0648\u0644 \u0628\u0627\u0644\u0644\u0647\u062C\u0629 \u0627\u0644\u0633\u0639\u0648\u062F\u064A\u0629.'
-        : 'Please start the interview by asking the first question in English.';
-    await askNextQuestion(startPrompt);
-}
-
-async function askNextQuestion(prompt) {
-    state.isLoading = true;
     showTyping();
     dom.submitBtn.disabled = true;
 
     try {
-        const response = await callGemini(prompt);
-
-        if (response.isComplete) {
-            finishInterview(response.question);
-            return;
-        }
-
-        // Update question index from AI response
-        if (response.questionNumber && !response.isFollowUp) {
-            state.questionIndex = response.questionNumber - 1;
-            state.followUpCount = 0;
-            // Add new entry to interviewData
-            state.interviewData.push({
-                question: response.question,
-                answer: '',
-                followUps: []
-            });
-        } else if (response.isFollowUp) {
-            state.followUpCount++;
-        }
-
-        updateProgress();
+        const prompt = state.lang === 'ar'
+            ? 'اكتب الأسئلة باللهجة السعودية العامية.'
+            : 'Generate the interview questions now.';
+        const questions = await callGeminiRaw(prompt);
+        if (!Array.isArray(questions) || questions.length === 0) throw new Error('Invalid questions format');
+        state.preGenQuestions = questions.slice(0, MAX_QUESTIONS);
         hideTyping();
-
-        // Show follow-up badge if it's a follow-up
-        if (response.isFollowUp) {
-            dom.questionText.innerHTML = `<span class="followup-badge">${t('followUpLabel')}</span> ${escapeHtml(response.question)}`;
-        } else {
-            dom.questionText.textContent = response.question;
-        }
-
-        renderInput(response.inputType || 'text', response.options || []);
-
-        // Button label: "Submit" on last question, "Next" otherwise
-        const isLastQuestion = response.questionNumber >= MAX_QUESTIONS && !response.isFollowUp;
-        dom.submitBtn.textContent = isLastQuestion ? t('submitBtn') : t('nextBtn');
-
-        dom.submitBtn.style.display = '';
-        dom.submitBtn.disabled = false;
-        state.isLoading = false;
-
+        showQuestion(0);
     } catch (err) {
         hideTyping();
-        state.isLoading = false;
         dom.submitBtn.disabled = false;
+        showError(err, () => startInterview());
+    }
+}
 
-        let errorDetail = err.message || 'Unknown error';
+function showQuestion(index) {
+    if (index >= state.preGenQuestions.length) {
+        finishInterview();
+        return;
+    }
 
-        if (err.message === 'network') {
-            showToast(t('errorNetwork'), 'error');
-            errorDetail = 'Network error \u2014 check your internet connection.';
-        } else if (err.message === 'ratelimit') {
-            errorDetail = state.lang === 'ar'
-                ? 'تجاوزت حد الطلبات. انتظر دقيقة ثم اضغط "حاول مرة ثانية".'
-                : 'Rate limit reached. Please wait a moment then click "Try Again".';
-            showToast(errorDetail, 'error');
-        } else {
-            showToast(`Error: ${errorDetail}`, 'error');
-        }
+    const q = state.preGenQuestions[index];
+    state.questionIndex = index;
+    state.followUpCount = 0;
 
-        // Show error details + retry button
-        dom.questionArea.style.display = 'flex';
-        dom.questionText.innerHTML = `
-            <strong style="color:var(--error)">${state.lang === 'ar' ? '\u0635\u0627\u0631 \u062E\u0637\u0623:' : 'Error:'}</strong>
-            <code style="display:block;margin-top:0.4rem;font-size:0.82rem;word-break:break-all;background:var(--bg-tertiary);padding:0.5rem;border-radius:6px;color:var(--error)">${escapeHtml(errorDetail)}</code>
-        `;
-        dom.inputContainer.innerHTML = '';
-        const retryBtn = document.createElement('button');
-        retryBtn.className = 'btn-primary';
-        retryBtn.textContent = state.lang === 'ar' ? '\u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u062B\u0627\u0646\u064A\u0629' : 'Try Again';
-        retryBtn.addEventListener('click', () => {
-            // Remove the last user message that failed so we can resend
-            if (state.conversationHistory.length > 0 && state.conversationHistory[state.conversationHistory.length - 1].role === 'user') {
-                const lastMsg = state.conversationHistory.pop();
-                askNextQuestion(lastMsg.parts[0].text);
-            } else {
-                askNextQuestion(prompt);
-            }
-        });
-        dom.inputContainer.appendChild(retryBtn);
+    if (!state.interviewData[index]) {
+        state.interviewData[index] = { question: q.question, answer: '', followUps: [] };
+    }
+
+    updateProgress();
+    dom.questionText.textContent = q.question;
+    renderInput(q.inputType || 'text', q.options || []);
+
+    const isLast = index >= MAX_QUESTIONS - 1;
+    dom.submitBtn.textContent = isLast ? t('submitBtn') : t('nextBtn');
+    dom.submitBtn.style.display = '';
+    dom.submitBtn.disabled = false;
+    state.isLoading = false;
+}
+
+function askNextQuestion(prompt) {
+    // Legacy stub — unused in pre-gen mode
+}
+
+function showError(err, retryFn) {
+    let errorDetail = err.message || 'Unknown error';
+    if (err.message === 'network') errorDetail = 'Network error — check your internet connection.';
+    if (err.message === 'ratelimit') errorDetail = state.lang === 'ar'
+        ? 'تجاوزت حد الطلبات. انتظر دقيقة ثم حاول مرة ثانية.'
+        : 'Rate limit reached. Please wait a moment then try again.';
+
+    showToast(`Error: ${errorDetail}`, 'error');
+    dom.questionArea.style.display = 'flex';
+    dom.questionText.innerHTML = `
+        <strong style="color:var(--error)">${state.lang === 'ar' ? 'صار خطأ:' : 'Error:'}</strong>
+        <code style="display:block;margin-top:0.4rem;font-size:0.82rem;word-break:break-all;background:var(--bg-tertiary);padding:0.5rem;border-radius:6px;color:var(--error)">${escapeHtml(errorDetail)}</code>
+    `;
+    dom.inputContainer.innerHTML = '';
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'btn-primary';
+    retryBtn.textContent = state.lang === 'ar' ? 'حاول مرة ثانية' : 'Try Again';
+    retryBtn.addEventListener('click', retryFn);
+    dom.inputContainer.appendChild(retryBtn);
         dom.answerArea.classList.remove('hidden');
         dom.submitBtn.style.display = 'none';
     }
@@ -1906,21 +1853,13 @@ async function submitAnswer() {
     clearValidationError();
 
     // Store the answer
-    const currentData = state.interviewData[state.interviewData.length - 1];
+    const currentData = state.interviewData[state.questionIndex];
     if (currentData) {
-        if (state.followUpCount > 0 && currentData.answer) {
-            // This is a follow-up answer
-            currentData.followUps.push({
-                question: dom.questionText.textContent,
-                answer: answer
-            });
-        } else {
-            currentData.answer = answer;
-        }
+        currentData.answer = answer;
     }
 
-    // Send answer to Gemini
-    await askNextQuestion(answer);
+    // Move to next question instantly
+    showQuestion(state.questionIndex + 1);
 }
 
 // ===== Interview History =====
